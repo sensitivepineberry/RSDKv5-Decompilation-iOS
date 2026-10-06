@@ -1,0 +1,59 @@
+name: Find path code (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to search"
+        required: true
+        default: "ios"
+        type: string
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          # Dependencies (SDL etc.) are not needed for this search
+          submodules: false
+
+      - name: Search for path-handling code
+        run: |
+          mkdir -p results/files
+          SRC="--include=*.cpp --include=*.hpp --include=*.h --include=*.c --include=*.mm --include=*.m"
+          EXCLUDE="--exclude-dir=dependencies --exclude-dir=.git --exclude-dir=Mods"
+
+          search() {
+            echo "=================== $1 ==================="
+            grep -rn $SRC $EXCLUDE -E "$1" . || echo "(no matches)"
+            echo
+          }
+
+          {
+            search 'appFileDir'
+            search 'userFileDir'
+            search 'RETRO_iOS'
+            search 'SDL_GetPrefPath|SDL_GetBasePath'
+            search 'chdir|getcwd'
+            search 'NSSearchPathForDirectoriesInDomains|NSDocumentDirectory|NSBundle|mainBundle'
+            search 'BASE_PATH'
+            search 'Data\.rsdk'
+          } | tee results/search.txt
+
+          # Copy every file that assigns appFileDir/userFileDir, for full context
+          grep -rlE $SRC $EXCLUDE "appFileDir|userFileDir" . 2>/dev/null \
+            | while read -r f; do
+                mkdir -p "results/files/$(dirname "$f")"
+                cp "$f" "results/files/$f"
+              done
+          echo "Files copied:"
+          find results/files -type f
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: path-search-results
+          path: results
