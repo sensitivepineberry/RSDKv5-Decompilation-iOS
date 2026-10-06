@@ -46,14 +46,23 @@ jobs:
           # macOS "Framework" target (Cocoa.h error). Add an explicit
           # dependency on "Framework-iOS". Safe to re-run (idempotent).
           cat > /tmp/patch_pbxproj.py <<'PYEOF'
-          import re, sys
+          import os, re, sys
           p = sys.argv[1]
           s = open(p, encoding="utf-8").read()
           if "AA01 /* PBXContainerItemProxy */" in s:
               print("already patched"); sys.exit(0)
 
-          SDL_PROJ = "F2F153952A070C3400C57723"   # SDL.xcodeproj reference
-          IOS_TARGET = "A7D88B5423E2437C00DCD162"  # SDL target "Framework-iOS"
+          # The target ID of SDL's "Framework-iOS" lives in SDL's own project file.
+          proj_dir = os.path.dirname(os.path.dirname(os.path.abspath(p)))
+          sdl_path = os.path.join(proj_dir, "dependencies/ios/SDL/Xcode/SDL/SDL.xcodeproj/project.pbxproj")
+          sdl = open(sdl_path, encoding="utf-8").read()
+          m = re.search(r"([0-9A-F]{24}) /\* Framework-iOS \*/ = \{\s*isa = PBXNativeTarget;", sdl)
+          if not m:
+              sys.exit("Could not find PBXNativeTarget 'Framework-iOS' in " + sdl_path)
+          IOS_TARGET = m.group(1)
+          print("Framework-iOS target id:", IOS_TARGET)
+
+          SDL_PROJ = "F2F153952A070C3400C57723"   # SDL.xcodeproj file reference in RSDKv5
           PROXY, DEP = "F2AB00012B0000010000AA01", "F2AB00022B0000010000AA02"
 
           proxy = f"""\t\t{PROXY} /* PBXContainerItemProxy */ = {{
@@ -67,6 +76,8 @@ jobs:
           s = s.replace("/* Begin PBXContainerItemProxy section */\n",
                         "/* Begin PBXContainerItemProxy section */\n" + proxy, 1)
 
+          if "/* Begin PBXTargetDependency section */" in s:
+              sys.exit("PBXTargetDependency section already exists - needs manual merge")
           dep = f"""/* Begin PBXTargetDependency section */
           \t\t{DEP} /* PBXTargetDependency */ = {{
           \t\t\tisa = PBXTargetDependency;
@@ -76,8 +87,6 @@ jobs:
           /* End PBXTargetDependency section */
 
           """
-          if "/* Begin PBXTargetDependency section */" in s:
-              sys.exit("PBXTargetDependency section already exists - patch needs manual merge")
           marker = "/* Begin PBXVariantGroup section */"
           if marker not in s:
               marker = "/* Begin XCBuildConfiguration section */"
