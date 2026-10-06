@@ -170,6 +170,43 @@ jobs:
           PYEOF
           python3 /tmp/patch_src.py "$PROJ_DIR/RSDKv5/RSDK/User/Core/UserStorage.cpp"
 
+      - name: Ensure Settings.bundle/Root.plist exists
+        run: |
+          # Settings.bundle is in the repo but its Root.plist (which defines the
+          # toggle in the iPhone Settings app) is not, so the option vanished.
+          # The engine reads the "PLUS_DLC" boolean from user defaults.
+          PROJ_DIR="$(dirname "${{ steps.locate.outputs.path }}")"
+          PLIST="$PROJ_DIR/RSDKv5/Settings.bundle/Root.plist"
+          if [ ! -f "$PLIST" ]; then
+            mkdir -p "$(dirname "$PLIST")"
+            cat > "$PLIST" <<'PLISTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>StringsTable</key>
+              <string>Root</string>
+              <key>PreferenceSpecifiers</key>
+              <array>
+                  <dict>
+                      <key>Type</key>
+                      <string>PSToggleSwitchSpecifier</string>
+                      <key>Title</key>
+                      <string>Mania Plus Content</string>
+                      <key>Key</key>
+                      <string>PLUS_DLC</string>
+                      <key>DefaultValue</key>
+                      <false/>
+                  </dict>
+              </array>
+          </dict>
+          </plist>
+          PLISTEOF
+            echo "Created $PLIST"
+          else
+            echo "$PLIST already exists"
+          fi
+
       - name: List schemes (debug aid)
         run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
 
