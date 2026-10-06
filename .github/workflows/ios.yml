@@ -54,17 +54,34 @@ jobs:
 
       - name: Package IPA
         run: |
-          APP=$(find build/Build/Products -name "*.app" -type d | head -n 1)
+          # Only accept an app built for a real iPhone/iPad
+          APP=$(find build/Build/Products -path "*iphoneos*" -name "*.app" -type d -maxdepth 3 | head -n 1)
           if [ -z "$APP" ]; then
-            echo "::error::No .app produced"; exit 1
+            echo "::error::No iphoneos .app produced"
+            find build/Build/Products -maxdepth 3
+            exit 1
           fi
+          echo "Packaging $APP"
           # Never bundle game data (Data.rsdk) - copy it into the
           # app's Documents folder on-device instead.
           find "$APP" -name "Data.rsdk" -delete
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          zip -r RSDKv5-iOS.ipa Payload
+          rm -rf Payload RSDKv5-iOS.ipa
+          mkdir Payload
+          # ditto preserves symlinks/permissions (plain zip -r can corrupt frameworks)
+          ditto "$APP" "Payload/$(basename "$APP")"
+          ditto -c -k --sequesterRsrc --keepParent Payload RSDKv5-iOS.ipa
           rm -rf Payload
+
+      - name: Verify IPA
+        run: |
+          unzip -l RSDKv5-iOS.ipa | head -n 20
+          rm -rf verify && mkdir verify && unzip -q RSDKv5-iOS.ipa -d verify
+          APP=$(ls -d verify/Payload/*.app)
+          plutil -p "$APP/Info.plist" | grep -E "CFBundleExecutable|CFBundleIdentifier|CFBundleSupportedPlatforms|MinimumOSVersion|DTPlatformName"
+          EXE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP/Info.plist")
+          test -f "$APP/$EXE" || { echo "::error::Executable $EXE missing"; exit 1; }
+          lipo -info "$APP/$EXE"
+          vtool -show-build "$APP/$EXE" || true
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
