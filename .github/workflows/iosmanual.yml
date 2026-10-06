@@ -40,6 +40,58 @@ jobs:
           echo "path=$PROJ" >> "$GITHUB_OUTPUT"
           echo "Using $PROJ"
 
+      - name: Patch project - depend on SDL Framework-iOS
+        run: |
+          # RSDKv5 had no explicit target dependencies, so Xcode picked SDL's
+          # macOS "Framework" target (Cocoa.h error). Add an explicit
+          # dependency on "Framework-iOS". Safe to re-run (idempotent).
+          cat > /tmp/patch_pbxproj.py <<'PYEOF'
+          import re, sys
+          p = sys.argv[1]
+          s = open(p, encoding="utf-8").read()
+          if "AA01 /* PBXContainerItemProxy */" in s:
+              print("already patched"); sys.exit(0)
+
+          SDL_PROJ = "F2F153952A070C3400C57723"   # SDL.xcodeproj reference
+          IOS_TARGET = "A7D88B5423E2437C00DCD162"  # SDL target "Framework-iOS"
+          PROXY, DEP = "F2AB00012B0000010000AA01", "F2AB00022B0000010000AA02"
+
+          proxy = f"""\t\t{PROXY} /* PBXContainerItemProxy */ = {{
+          \t\t\tisa = PBXContainerItemProxy;
+          \t\t\tcontainerPortal = {SDL_PROJ} /* SDL.xcodeproj */;
+          \t\t\tproxyType = 1;
+          \t\t\tremoteGlobalIDString = {IOS_TARGET};
+          \t\t\tremoteInfo = "Framework-iOS";
+          \t\t}};
+          """
+          s = s.replace("/* Begin PBXContainerItemProxy section */\n",
+                        "/* Begin PBXContainerItemProxy section */\n" + proxy, 1)
+
+          dep = f"""/* Begin PBXTargetDependency section */
+          \t\t{DEP} /* PBXTargetDependency */ = {{
+          \t\t\tisa = PBXTargetDependency;
+          \t\t\tname = "Framework-iOS";
+          \t\t\ttargetProxy = {PROXY} /* PBXContainerItemProxy */;
+          \t\t}};
+          /* End PBXTargetDependency section */
+
+          """
+          if "/* Begin PBXTargetDependency section */" in s:
+              sys.exit("PBXTargetDependency section already exists - patch needs manual merge")
+          marker = "/* Begin PBXVariantGroup section */"
+          if marker not in s:
+              marker = "/* Begin XCBuildConfiguration section */"
+          s = s.replace(marker, dep + marker, 1)
+
+          pat = re.compile(r"(isa = PBXNativeTarget;(?:(?!isa = PBXNativeTarget;).)*?dependencies = \()(\s*)(\);\s*name = RSDKv5;)", re.S)
+          s, n = pat.subn(lambda m: f"{m.group(1)}\n\t\t\t\t{DEP} /* PBXTargetDependency */,\n\t\t\t{m.group(3)}", s, count=1)
+          if n != 1:
+              sys.exit("RSDKv5 target not found")
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched")
+          PYEOF
+          python3 /tmp/patch_pbxproj.py "${{ steps.locate.outputs.path }}/project.pbxproj"
+
       - name: List schemes (debug aid)
         run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
 
