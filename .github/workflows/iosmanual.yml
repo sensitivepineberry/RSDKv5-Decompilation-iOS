@@ -129,6 +129,47 @@ jobs:
             echo "$PLIST already exists"
           fi
 
+      - name: Patch source - load mods from Documents (iOS)
+        run: |
+          # On iOS the engine looked for mods in the app bundle (Data/mods).
+          # Point it at the Documents folder instead, and create Documents/mods.
+          PROJ_DIR="$(dirname "${{ steps.locate.outputs.path }}")"
+          cat > /tmp/patch_src.py <<'PYEOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p, encoding="utf-8").read()
+          MARK = "// mods-in-documents patch"
+          if MARK in s:
+              print("already patched"); sys.exit(0)
+
+          old = '    sprintf_s(SKU::appFileDir, sizeof(SKU::appFileDir), "%s/Data/", getAppResourcesPath());\n'
+          if s.count(old) != 1:
+              sys.exit("appFileDir line not found exactly once - source changed, patch needs updating")
+
+          new = f'''#if RETRO_PLATFORM == RETRO_iOS
+              {MARK}
+              // Mods live in the Documents folder (same place as Data.rsdk), not in the
+              // read-only app bundle. appFileDir is only used to find the "mods" folder.
+              sprintf_s(SKU::appFileDir, sizeof(SKU::appFileDir), "%s", SKU::userFileDir);
+              {{
+                  char modsDir[0x200];
+                  sprintf_s(modsDir, sizeof(modsDir), "%smods", SKU::userFileDir);
+                  mkdir(modsDir, 0755); // create Documents/mods so it shows up in Files
+              }}
+          #else
+          {old}#endif
+          '''
+          s = s.replace(old, new, 1)
+
+          inc = '#include "RSDK/Core/RetroEngine.hpp"\n'
+          if s.count(inc) < 1:
+              sys.exit("include line not found")
+          s = s.replace(inc, inc + "#include <sys/stat.h>\n", 1)
+          open(p, "w", encoding="utf-8").write(s)
+          print("patched")
+          PYEOF
+          python3 /tmp/patch_src.py "$PROJ_DIR/RSDKv5/RSDK/User/Core/UserStorage.cpp"
+
       - name: List schemes (debug aid)
         run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
 
@@ -164,6 +205,10 @@ jobs:
           # Never bundle game data (Data.rsdk) - copy it into the
           # app's Documents folder on-device instead.
           find "$APP" -name "Data.rsdk" -delete
+          # Mods must not live inside the (read-only) app bundle.
+          echo "Bundled Data/ before cleanup:"; ls -la "$APP/Data" 2>/dev/null || true
+          rm -rf "$APP/Data/mods"
+          echo "Bundled Data/ after cleanup:"; ls -la "$APP/Data" 2>/dev/null || echo "(no Data folder)"
           rm -rf Payload RSDKv5-iOS.ipa
           mkdir Payload
           # ditto preserves symlinks/permissions (plain zip -r can corrupt frameworks)
