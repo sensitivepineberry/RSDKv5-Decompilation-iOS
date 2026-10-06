@@ -1,0 +1,64 @@
+name: Find settings code (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to search"
+        required: true
+        default: "ios"
+        type: string
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: false
+
+      - name: Search for Settings bundle and settings code
+        run: |
+          mkdir -p results/files
+          EXCLUDE="--exclude-dir=dependencies --exclude-dir=.git"
+
+          {
+            echo "=========== Settings.bundle / plist files ==========="
+            find . -path ./dependencies -prune -o \( -iname "*.bundle" -o -iname "Root.plist" -o -iname "*.plist" -o -iname "*.strings" \) -print \
+              | grep -v "^./dependencies" || echo "(none)"
+            echo
+
+            echo "=========== project file mentions ==========="
+            grep -rn $EXCLUDE -iE "Settings\.bundle|Root\.plist" --include=project.pbxproj . || echo "(none)"
+            echo
+
+            echo "=========== code: user defaults / settings ==========="
+            grep -rn $EXCLUDE -E "NSUserDefaults|standardUserDefaults|registerDefaults|InAppSettings" \
+              --include=*.mm --include=*.m --include=*.cpp --include=*.hpp --include=*.h . || echo "(none)"
+            echo
+
+            echo "=========== code: plus ==========="
+            grep -rn $EXCLUDE -iE "plus" \
+              --include=*.mm --include=*.m --include=cocoaHelpers* . | head -100 || echo "(none)"
+            echo
+
+            echo "=========== ios folder ==========="
+            find . -maxdepth 3 -iname "*ios*" -not -path "./dependencies/*" -not -path "./.git/*" || true
+          } | tee results/search.txt
+
+          # Copy any settings bundle and the Cocoa helper for full context
+          find . -path ./dependencies -prune -o \( -iname "Settings.bundle" -o -iname "cocoaHelpers*" \) -print \
+            | while read -r f; do
+                mkdir -p "results/files/$(dirname "$f")"
+                cp -R "$f" "results/files/$f"
+              done
+          echo "Files copied:"
+          find results/files -type f
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-search-results
+          path: results
