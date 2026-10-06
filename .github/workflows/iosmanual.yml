@@ -45,6 +45,7 @@ jobs:
 
       - name: Build (unsigned)
         run: |
+          set -o pipefail
           xcodebuild \
             -project "${{ steps.locate.outputs.path }}" \
             -scheme "$XCODE_SCHEME" \
@@ -66,6 +67,11 @@ jobs:
             exit 1
           fi
           echo "Packaging $APP"
+          ls -la "$APP"
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "::error::$APP has no Info.plist - the build did not produce a real app"
+            exit 1
+          fi
           # Never bundle game data (Data.rsdk) - copy it into the
           # app's Documents folder on-device instead.
           find "$APP" -name "Data.rsdk" -delete
