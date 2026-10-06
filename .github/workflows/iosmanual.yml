@@ -101,6 +101,34 @@ jobs:
           PYEOF
           python3 /tmp/patch_pbxproj.py "${{ steps.locate.outputs.path }}/project.pbxproj"
 
+      - name: Ensure RSDKv5/Info.plist exists
+        run: |
+          # The project references RSDKv5/Info.plist but it isn't in the repo,
+          # which fails the build. Create a minimal one (Xcode merges in the
+          # rest from the INFOPLIST_KEY_* build settings).
+          # UIFileSharingEnabled lets you drop Data.rsdk into the app's
+          # Documents folder via Files / Finder.
+          PROJ_DIR="$(dirname "${{ steps.locate.outputs.path }}")"
+          PLIST="$PROJ_DIR/RSDKv5/Info.plist"
+          if [ ! -f "$PLIST" ]; then
+            mkdir -p "$(dirname "$PLIST")"
+            cat > "$PLIST" <<'PLISTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>UIFileSharingEnabled</key>
+              <true/>
+              <key>LSSupportsOpeningDocumentsInPlace</key>
+              <true/>
+          </dict>
+          </plist>
+          PLISTEOF
+            echo "Created $PLIST"
+          else
+            echo "$PLIST already exists"
+          fi
+
       - name: List schemes (debug aid)
         run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
 
