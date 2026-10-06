@@ -1,0 +1,80 @@
+name: Build iOS (RSDKv5)
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Adjust if your fork names the iOS project differently
+  # (spaces are fine, they're quoted below).
+  XCODE_PROJECT: "RSDKv5.xcodeproj"
+  XCODE_SCHEME: "RSDKv5"
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Locate Xcode project
+        id: locate
+        run: |
+          PROJ=$(find . -maxdepth 3 -name "$XCODE_PROJECT" -not -path "*/node_modules/*" | head -n 1)
+          if [ -z "$PROJ" ]; then
+            echo "::error::Could not find '$XCODE_PROJECT'. Available projects:"
+            find . -maxdepth 3 -name "*.xcodeproj"
+            exit 1
+          fi
+          echo "path=$PROJ" >> "$GITHUB_OUTPUT"
+          echo "Using $PROJ"
+
+      - name: List schemes (debug aid)
+        run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project "${{ steps.locate.outputs.path }}" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build.log
+
+      - name: Package IPA
+        run: |
+          APP=$(find build/Build/Products -name "*.app" -type d | head -n 1)
+          if [ -z "$APP" ]; then
+            echo "::error::No .app produced"; exit 1
+          fi
+          # Never bundle game data (Data.rsdk) - copy it into the
+          # app's Documents folder on-device instead.
+          find "$APP" -name "Data.rsdk" -delete
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -r RSDKv5-iOS.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv5-iOS-ipa
+          path: RSDKv5-iOS.ipa
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
