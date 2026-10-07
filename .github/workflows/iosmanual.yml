@@ -207,6 +207,19 @@ jobs:
             echo "$PLIST already exists"
           fi
 
+      - name: Patch source - OpenGL ES renderer (video shaders)
+        run: |
+          # The stock iOS renderer (SDL + Metal) has shaders hard-disabled.
+          # This swaps in an OpenGL ES 2 renderer. The script is committed to
+          # the repo at .github/scripts/patch_gles.py (same branch as this file).
+          PROJ_DIR="$(dirname "${{ steps.locate.outputs.path }}")"
+          SCRIPT="$GITHUB_WORKSPACE/.github/scripts/patch_gles.py"
+          if [ ! -f "$SCRIPT" ]; then
+            echo "::error::Missing .github/scripts/patch_gles.py - add it to the branch being built"
+            exit 1
+          fi
+          python3 "$SCRIPT" "$PROJ_DIR"
+
       - name: List schemes (debug aid)
         run: xcodebuild -list -project "${{ steps.locate.outputs.path }}"
 
@@ -222,6 +235,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            OTHER_LDFLAGS='$(inherited) -framework OpenGLES' \
             build 2>&1 | tee build.log
 
       - name: Package IPA
@@ -245,6 +259,16 @@ jobs:
           # Mods must not live inside the (read-only) app bundle.
           echo "Bundled Data/ before cleanup:"; ls -la "$APP/Data" 2>/dev/null || true
           rm -rf "$APP/Data/mods"
+          # Bundle the OpenGL shader sources (loaded from <app>/Shaders/OGL when
+          # they are not found in Data.rsdk / Documents/Data).
+          SHADERS_SRC="$(dirname "${{ steps.locate.outputs.path }}")/RSDKv5/Shaders/OGL"
+          if [ -d "$SHADERS_SRC" ]; then
+            mkdir -p "$APP/Shaders/OGL"
+            cp "$SHADERS_SRC"/* "$APP/Shaders/OGL/"
+            echo "Bundled shaders:"; ls "$APP/Shaders/OGL"
+          else
+            echo "::warning::No shader folder at $SHADERS_SRC"
+          fi
           echo "Bundled Data/ after cleanup:"; ls -la "$APP/Data" 2>/dev/null || echo "(no Data folder)"
           rm -rf Payload RSDKv5-iOS.ipa
           mkdir Payload
