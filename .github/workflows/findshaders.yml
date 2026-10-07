@@ -1,0 +1,60 @@
+name: Find shader code (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to search"
+        required: true
+        default: "ios"
+        type: string
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: false
+
+      - name: Search for shader and render code
+        run: |
+          mkdir -p results/files
+          SRC="--include=*.cpp --include=*.hpp --include=*.h --include=*.mm --include=*.m"
+          EXCLUDE="--exclude-dir=dependencies --exclude-dir=.git"
+
+          search() {
+            echo "=================== $1 ==================="
+            grep -rn $SRC $EXCLUDE -E "$1" . | cut -c1-260 | head -80 || true
+            echo
+          }
+
+          {
+            echo "=================== shader files in repo ==================="
+            find . \( -path ./dependencies -o -path ./.git \) -prune -o \
+              \( -iname "*.fs" -o -iname "*.vs" -o -iname "*.glsl" -o -iname "*.frag" -o -iname "*.vert" -o -iname "*.metal" -o -ipath "*shader*" \) -print | head -100
+            echo
+            search 'LoadShader|InitShaders|shaderCount|shaderList'
+            search '#version|GL_ES|GLES|precision (high|medium|low)p'
+            search 'RETRO_RENDERDEVICE|RETRO_USING_OPENGL|RETRO_USE_ES'
+            search 'SDL_GL_SetAttribute|SDL_GL_CONTEXT'
+            search 'Shaders/'
+          } | tee results/search.txt
+
+          # Full copies of render device sources and shader files
+          find . \( -path ./dependencies -o -path ./.git \) -prune -o \
+            \( -iname "*RenderDevice*" -o -iname "*.fs" -o -iname "*.vs" -o -iname "*.glsl" -o -iname "*.frag" -o -iname "*.vert" \) -type f -print \
+            | while read -r f; do
+                mkdir -p "results/files/$(dirname "$f")"
+                cp "$f" "results/files/$f"
+              done
+          echo "Files copied:"
+          find results/files -type f
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: shader-search-results
+          path: results
